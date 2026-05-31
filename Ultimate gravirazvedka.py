@@ -236,7 +236,13 @@ def write_dsaa(path: str, grid: np.ndarray,
 def read_observed_field(path: str) -> tuple[np.ndarray, np.ndarray]:
     """
     Читает наблюдённое поле из текстового файла.
-    Принимает CSV/TSV/whitespace-separated, две колонки: x_km, g_mGal.
+
+    Поддерживаемые форматы:
+      • 2 колонки: x_км, g_z (мГал)
+      • 4 колонки: x_км, y, z, g_z — формат типа Grav_air.dat
+                   (берётся 1-я колонка как X и 4-я как g_z; y и z игнорируются)
+
+    Разделитель — пробелы, табуляция, запятая или точка с запятой.
     Игнорирует строки-комментарии (#) и нечисловые заголовки.
     """
     xs, gs = [], []
@@ -247,11 +253,17 @@ def read_observed_field(path: str) -> tuple[np.ndarray, np.ndarray]:
                 continue
             # Пробуем разные разделители
             parts = row.replace(",", " ").replace(";", " ").split()
-            if len(parts) < 2:
-                continue
+            # Все ли «как число»? Парсим первую и нужный по числу колонок столбец
             try:
-                x = float(parts[0]); g = float(parts[1])
+                nums = [float(p) for p in parts]
             except ValueError:
+                continue
+            if len(nums) == 2:
+                x, g = nums[0], nums[1]
+            elif len(nums) >= 4:
+                # формат x, y, z, g — берём 1-ю и 4-ю
+                x, g = nums[0], nums[3]
+            else:
                 continue
             xs.append(x); gs.append(g)
     if not xs:
@@ -1543,10 +1555,13 @@ class GravityModelerApp:
         messagebox.showinfo("Готово", f"Сохранено:\n{path}")
 
     def save_observed_field(self) -> None:
-        """Экспорт оцифрованного/загруженного наблюдённого поля в текстовый файл.
+        """Экспорт оцифрованного/загруженного наблюдённого поля.
 
-        Сохраняет obs_x_km и obs_g_mgal как две колонки. Совместимо с
-        собственной функцией загрузки и с любыми внешними программами.
+        Формат: CSV без заголовка, 4 колонки через запятую:
+            x_км, y, z, g_z_мГал
+        где y и z для 2D-профиля = 0. Окончания строк CRLF (для совместимости
+        с Windows-программами). Совместимо с форматом DOS-инструментов
+        (например, Grav_air.dat).
         """
         if self.obs_x_km is None or self.obs_g_mgal is None:
             messagebox.showwarning(
@@ -1556,17 +1571,20 @@ class GravityModelerApp:
                 "и нажмите «→ в наблюдённое поле».")
             return
         path = filedialog.asksaveasfilename(
-            title="Сохранить наблюдённое поле", defaultextension=".txt",
-            filetypes=[("TXT", "*.txt"), ("CSV", "*.csv")])
+            title="Сохранить наблюдённое поле",
+            defaultextension=".dat",
+            filetypes=[("DAT (CSV)", "*.dat"), ("CSV", "*.csv"),
+                       ("Текст", "*.txt"), ("Все файлы", "*.*")])
         if not path:
             return
         try:
-            with open(path, "w", encoding="utf-8") as f:
-                f.write("# x_km  g_z_mGal\n")
+            with open(path, "w", encoding="utf-8", newline="") as f:
                 for x, g in zip(self.obs_x_km, self.obs_g_mgal):
-                    f.write(f"{x:10.4f}  {g:+10.5f}\n")
-            messagebox.showinfo("Готово", f"Сохранено:\n{path}\n"
-                                            f"Точек: {len(self.obs_x_km)}")
+                    # Формат как в Grav_air.dat: x,0,0,g — CRLF
+                    f.write(f"{x:g},0,0,{g:g}\r\n")
+            messagebox.showinfo("Готово",
+                                  f"Сохранено:\n{path}\n"
+                                  f"Точек: {len(self.obs_x_km)}")
         except Exception as exc:
             messagebox.showerror("Ошибка", f"Не сохранилось:\n{exc}")
 
